@@ -17,22 +17,32 @@ class GravityDelegate {
     private OrientationHelper horizontalHelper;
     private int gravity;
     private boolean isRtlHorizontal;
+    private boolean clipToPadding;
     private boolean snapLastItem;
     private GravitySnapHelper.SnapListener listener;
-    private boolean snapping;
+    private View snapView;
     private RecyclerView.OnScrollListener mScrollListener = new RecyclerView.OnScrollListener() {
         @Override
         public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
             super.onScrollStateChanged(recyclerView, newState);
             if (newState == RecyclerView.SCROLL_STATE_SETTLING) {
-                snapping = false;
+                snapView = null;
             }
-            if (newState == RecyclerView.SCROLL_STATE_IDLE && snapping && listener != null) {
+            if (newState == RecyclerView.SCROLL_STATE_IDLE && snapView != null && listener != null) {
                 int position = getSnappedPosition(recyclerView);
                 if (position != RecyclerView.NO_POSITION) {
                     listener.onSnap(position);
                 }
-                snapping = false;
+                snapView = null;
+            }
+        }
+
+        @Override
+        public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
+            // RecyclerView does not fire onScrollStateChanged if the user flings to either end
+            if (listener != null && !recyclerView.canScrollVertically(dy)) {
+                int position = dy < 0 ? 0 : recyclerView.getLayoutManager().getItemCount() - 1;
+                listener.onSnap(position);
             }
         }
     };
@@ -65,6 +75,7 @@ class GravityDelegate {
                 isRtlHorizontal
                         = recyclerView.getContext().getResources().getConfiguration()
                         .getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
+                clipToPadding = recyclerView.getClipToPadding();
             }
             if (listener != null) {
                 recyclerView.addOnScrollListener(mScrollListener);
@@ -100,7 +111,7 @@ class GravityDelegate {
     }
 
     public View findSnapView(RecyclerView.LayoutManager layoutManager) {
-        View snapView = null;
+        snapView = null;
         if (layoutManager instanceof LinearLayoutManager) {
             switch (gravity) {
                 case Gravity.START:
@@ -117,7 +128,6 @@ class GravityDelegate {
                     break;
             }
         }
-        snapping = snapView != null;
         return snapView;
     }
 
@@ -171,7 +181,8 @@ class GravityDelegate {
             // is greater than 0.5 of it's total width.
             // In a RTL configuration, we need to check the start point and in LTR the end point
             if (isRtlHorizontal) {
-                visibleWidth = (float) (helper.getTotalSpace() - helper.getDecoratedStart(child))
+                int totalSpace = !clipToPadding ? helper.getTotalSpace() : layoutManager.getHeight();
+                visibleWidth = (float) (totalSpace - helper.getDecoratedStart(child))
                         / helper.getDecoratedMeasurement(child);
             } else {
                 visibleWidth = (float) helper.getDecoratedEnd(child)
@@ -180,9 +191,7 @@ class GravityDelegate {
 
             // If we're at the end of the list, we shouldn't snap
             // to avoid having the last item not completely visible.
-            boolean endOfList = ((LinearLayoutManager) layoutManager)
-                    .findLastCompletelyVisibleItemPosition()
-                    == layoutManager.getItemCount() - 1;
+            boolean endOfList = firstChild == layoutManager.getItemCount() - 1;
 
             if (visibleWidth > 0.5f && !endOfList) {
                 return child;
@@ -223,14 +232,14 @@ class GravityDelegate {
                 visibleWidth = (float) helper.getDecoratedEnd(child)
                         / helper.getDecoratedMeasurement(child);
             } else {
-                visibleWidth = (float) (helper.getTotalSpace() - helper.getDecoratedStart(child))
+                int totalSpace = clipToPadding ? helper.getTotalSpace() : layoutManager.getHeight();
+                visibleWidth = (float) (totalSpace - helper.getDecoratedStart(child))
                         / helper.getDecoratedMeasurement(child);
             }
 
             // If we're at the start of the list, we shouldn't snap
             // to avoid having the first item not completely visible.
-            boolean startOfList = ((LinearLayoutManager) layoutManager)
-                    .findFirstCompletelyVisibleItemPosition() == 0;
+            boolean startOfList = lastChild == 0;
 
             if (visibleWidth > 0.5f && !startOfList) {
                 return child;
@@ -248,16 +257,7 @@ class GravityDelegate {
 
     int getSnappedPosition(RecyclerView recyclerView) {
         RecyclerView.LayoutManager layoutManager = recyclerView.getLayoutManager();
-
-        if (layoutManager instanceof LinearLayoutManager) {
-            if (gravity == Gravity.START || gravity == Gravity.TOP) {
-                return ((LinearLayoutManager) layoutManager).findFirstCompletelyVisibleItemPosition();
-            } else if (gravity == Gravity.END || gravity == Gravity.BOTTOM) {
-                return ((LinearLayoutManager) layoutManager).findLastCompletelyVisibleItemPosition();
-            }
-        }
-
-        return RecyclerView.NO_POSITION;
+        return layoutManager.getPosition(snapView);
     }
 
     private OrientationHelper getVerticalHelper(RecyclerView.LayoutManager layoutManager) {
